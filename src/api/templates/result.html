@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+{% block title %}Decision - EquiLend AI{% endblock %}
+
+{% block extra_head %}
+<style>
+    .result-hero {
+        text-align: center;
+        padding: 2rem 0 1.5rem;
+    }
+    .decision-ring {
+        width: 120px; height: 120px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 1.25rem;
+        position: relative;
+    }
+    .decision-ring.ring-approved {
+        background: radial-gradient(circle, var(--success-glow) 0%, transparent 70%);
+        box-shadow: 0 0 60px var(--success-glow);
+    }
+    .decision-ring.ring-denied {
+        background: radial-gradient(circle, var(--danger-glow) 0%, transparent 70%);
+        box-shadow: 0 0 60px var(--danger-glow);
+    }
+    .decision-ring .ring-inner {
+        width: 90px; height: 90px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 2.2rem;
+    }
+    .decision-ring.ring-approved .ring-inner {
+        background: rgba(74, 222, 128, 0.08);
+        border: 2px solid rgba(74, 222, 128, 0.3);
+    }
+    .decision-ring.ring-denied .ring-inner {
+        background: rgba(248, 113, 113, 0.08);
+        border: 2px solid rgba(248, 113, 113, 0.3);
+    }
+
+    .decision-label {
+        font-size: 1.8rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        margin-bottom: 0.25rem;
+    }
+    .decision-sub {
+        color: var(--text-secondary);
+        font-size: 0.95rem;
+    }
+
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1rem;
+        margin: 1.5rem 0;
+    }
+    .stat-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 1.25rem;
+        text-align: center;
+        transition: all 0.3s ease;
+    }
+    .stat-card:hover {
+        border-color: var(--border-hover);
+        transform: translateY(-2px);
+    }
+    .stat-label {
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-muted);
+        margin-bottom: 0.4rem;
+    }
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+    }
+    .stat-value.val-green { color: var(--success); }
+    .stat-value.val-red { color: var(--danger); }
+    .stat-value.val-blue { color: var(--accent); }
+
+    @media (max-width: 640px) {
+        .stats-row { grid-template-columns: 1fr; }
+    }
+
+    .shap-row {
+        display: flex;
+        align-items: center;
+        padding: 0.85rem 0;
+        border-bottom: 1px solid var(--border);
+        gap: 1rem;
+    }
+    .shap-row:last-child { border-bottom: none; }
+    .shap-feature {
+        width: 140px;
+        font-weight: 600;
+        font-size: 0.88rem;
+        flex-shrink: 0;
+    }
+    .shap-direction {
+        width: 110px;
+        font-size: 0.82rem;
+        flex-shrink: 0;
+    }
+    .shap-bar-container {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .shap-bar-track {
+        flex: 1;
+        height: 8px;
+        background: rgba(255,255,255,0.03);
+        border-radius: 4px;
+        overflow: hidden;
+    }
+    .shap-bar-fill {
+        height: 100%;
+        border-radius: 4px;
+        transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .shap-bar-fill.pos { background: linear-gradient(90deg, #fb923c, var(--danger)); }
+    .shap-bar-fill.neg { background: linear-gradient(90deg, var(--success), #22d3ee); }
+    .shap-val {
+        font-size: 0.78rem;
+        color: var(--text-muted);
+        width: 50px;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        flex-shrink: 0;
+    }
+
+    .email-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+    }
+    .email-meta {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+    }
+
+    .actions-bar {
+        display: flex;
+        gap: 0.75rem;
+        margin-top: 2rem;
+        flex-wrap: wrap;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="result-hero animate-in">
+    <div class="decision-ring {% if decision == 'approved' %}ring-approved{% else %}ring-denied{% endif %}">
+        <div class="ring-inner">
+            {% if decision == "approved" %}
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            {% else %}
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            {% endif %}
+        </div>
+    </div>
+    <div class="decision-label {% if decision == 'approved' %}approved{% else %}denied{% endif %}">
+        {{ decision|upper }}
+    </div>
+    <div class="decision-sub">Application #{{ record_id }} &middot; {{ applicant_name }}</div>
+</div>
+
+<div class="stats-row animate-in animate-delay-1">
+    <div class="stat-card">
+        <div class="stat-label">Default Probability</div>
+        <div class="stat-value {% if decision == 'approved' %}val-green{% else %}val-red{% endif %}">{{ default_prob }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Model Confidence</div>
+        <div class="stat-value val-blue">{{ confidence }}%</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Bias Score</div>
+        <div class="stat-value" style="color: var(--warning);">{{ bias_score }}</div>
+    </div>
+</div>
+
+<div class="card animate-in animate-delay-2">
+    <h2><span class="icon icon-blue">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    </span> Key Factors &mdash; SHAP Analysis</h2>
+    <p style="color:var(--text-muted); font-size:0.82rem; margin-bottom:1.25rem; margin-top:-0.5rem;">
+        Top factors that influenced the decision, ranked by importance
+    </p>
+    {% for r in shap_reasons %}
+    <div class="shap-row">
+        <div class="shap-feature">{{ r.feature }}</div>
+        <div class="shap-direction">
+            {% if r.shap_value > 0 %}
+            <span style="color:var(--danger);">&#9650; Risk</span>
+            {% else %}
+            <span style="color:var(--success);">&#9660; Risk</span>
+            {% endif %}
+        </div>
+        <div class="shap-bar-container">
+            <div class="shap-bar-track">
+                {% set width = (r.shap_value|abs * 20)|int %}
+                {% if width > 100 %}{% set width = 100 %}{% endif %}
+                {% if width < 4 %}{% set width = 4 %}{% endif %}
+                <div class="shap-bar-fill {% if r.shap_value > 0 %}pos{% else %}neg{% endif %}"
+                     style="width:{{ width }}%;"></div>
+            </div>
+            <span class="shap-val">{{ "%.3f"|format(r.shap_value) }}</span>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="card animate-in animate-delay-3">
+    <div class="email-header">
+        <h2 style="margin-bottom:0;">
+            <span class="icon icon-green">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+            </span>
+            Decision Email
+        </h2>
+        <div class="email-meta">
+            {% if bias_action == "send" %}
+            <span class="badge badge-green">&#10003; Clean</span>
+            {% elif bias_action == "rewritten" %}
+            <span class="badge badge-yellow">&#8634; Rewritten {{ bias_rewrites }}x</span>
+            {% else %}
+            <span class="badge badge-red">&#9888; Escalated</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="email-box">{{ email }}</div>
+</div>
+
+<div class="actions-bar animate-in animate-delay-4">
+    <a href="/" class="btn btn-primary">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        New Application
+    </a>
+    <a href="/audit" class="btn btn-outline">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        View Audit Log
+    </a>
+</div>
+{% endblock %}

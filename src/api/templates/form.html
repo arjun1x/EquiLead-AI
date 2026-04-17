@@ -1,0 +1,383 @@
+{% extends "base.html" %}
+{% block title %}Apply for a Loan - EquiLend AI{% endblock %}
+
+{% block extra_head %}
+<style>
+    .hero {
+        text-align: center;
+        padding: 2rem 0 2.5rem;
+    }
+    .hero h1 {
+        font-size: 2.5rem;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+        line-height: 1.15;
+        margin-bottom: 0.75rem;
+    }
+    .hero h1 .gradient {
+        background: linear-gradient(135deg, var(--accent), var(--accent-secondary), var(--success));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    .hero .subtitle {
+        color: var(--text-secondary);
+        font-size: 1.05rem;
+        max-width: 520px;
+        margin: 0 auto;
+        line-height: 1.6;
+    }
+
+    .trust-badges {
+        display: flex;
+        justify-content: center;
+        gap: 2rem;
+        margin-top: 1.75rem;
+        flex-wrap: wrap;
+    }
+    .trust-badge {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: var(--text-muted);
+        font-size: 0.82rem;
+        font-weight: 500;
+    }
+    .trust-badge .dot {
+        width: 8px; height: 8px;
+        border-radius: 50%;
+        background: var(--success);
+        box-shadow: 0 0 8px var(--success-glow);
+    }
+
+    .step-indicator {
+        display: flex;
+        justify-content: center;
+        gap: 0.5rem;
+        margin-bottom: 2rem;
+    }
+    .step {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: var(--text-muted);
+        padding: 0.4rem 0.9rem;
+        border-radius: 20px;
+        background: rgba(255,255,255,0.03);
+        border: 1px solid transparent;
+        transition: all 0.3s ease;
+    }
+    .step.active {
+        color: var(--accent);
+        background: var(--accent-glow);
+        border-color: rgba(56, 189, 248, 0.15);
+    }
+    .step .step-num {
+        width: 20px; height: 20px;
+        border-radius: 50%;
+        background: var(--text-muted);
+        color: var(--bg-primary);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.68rem;
+        font-weight: 700;
+    }
+    .step.active .step-num {
+        background: var(--accent);
+    }
+    .step-connector {
+        width: 24px;
+        height: 1px;
+        background: var(--border);
+        align-self: center;
+    }
+
+    .form-card {
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+    }
+    .form-card::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0;
+        width: 3px;
+        height: 100%;
+        border-radius: 3px 0 0 3px;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+    .form-card:focus-within::before {
+        opacity: 1;
+    }
+    .form-card:nth-child(1)::before { background: linear-gradient(180deg, var(--accent), var(--accent-secondary)); }
+    .form-card:nth-child(2)::before { background: linear-gradient(180deg, var(--accent-secondary), var(--success)); }
+    .form-card:nth-child(3)::before { background: linear-gradient(180deg, var(--success), #22d3ee); }
+    .form-card:nth-child(4)::before { background: linear-gradient(180deg, var(--warning), #fb923c); }
+
+    .input-hint {
+        font-size: 0.73rem;
+        color: var(--text-muted);
+        margin-top: -0.7rem;
+        margin-bottom: 0.8rem;
+    }
+
+    .submit-section {
+        text-align: center;
+        margin-top: 1.5rem;
+    }
+    .submit-section button {
+        padding: 1rem 3rem;
+        font-size: 1rem;
+        border-radius: 12px;
+    }
+    .submit-section .fine-print {
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        margin-top: 0.75rem;
+    }
+
+    .loading-overlay {
+        display: none;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(6, 9, 15, 0.92);
+        backdrop-filter: blur(8px);
+        z-index: 200;
+        align-items: center;
+        justify-content: center;
+    }
+    .loading-overlay.show { display: flex; }
+    .loading-content {
+        text-align: center;
+        max-width: 400px;
+        padding: 2rem;
+    }
+    .loading-ring {
+        width: 64px; height: 64px;
+        border: 3px solid var(--border);
+        border-top-color: var(--accent);
+        border-right-color: var(--accent-secondary);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 1.5rem;
+    }
+    .loading-steps {
+        text-align: left;
+        margin-top: 1.5rem;
+    }
+    .loading-step {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.5rem 0;
+        color: var(--text-muted);
+        font-size: 0.88rem;
+        transition: color 0.3s;
+    }
+    .loading-step.active { color: var(--accent); }
+    .loading-step.done { color: var(--success); }
+    .loading-step .step-icon {
+        width: 20px;
+        text-align: center;
+        font-size: 0.75rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="hero animate-in">
+    <h1>Home Equity <span class="gradient">Loan Application</span></h1>
+    <p class="subtitle">
+        Our AI evaluates your application with explainable ML, generates a personalized decision,
+        and audits for bias &mdash; all in seconds.
+    </p>
+    <div class="trust-badges">
+        <div class="trust-badge"><div class="dot"></div> XGBoost ML Model</div>
+        <div class="trust-badge"><div class="dot"></div> SHAP Explainability</div>
+        <div class="trust-badge"><div class="dot"></div> AI Bias Detection</div>
+    </div>
+</div>
+
+<div class="step-indicator animate-in animate-delay-1">
+    <div class="step active" id="step1"><span class="step-num">1</span> Personal</div>
+    <div class="step-connector"></div>
+    <div class="step" id="step2"><span class="step-num">2</span> Loan</div>
+    <div class="step-connector"></div>
+    <div class="step" id="step3"><span class="step-num">3</span> Property</div>
+    <div class="step-connector"></div>
+    <div class="step" id="step4"><span class="step-num">4</span> Credit</div>
+</div>
+
+<form id="loanForm" action="/apply" method="POST">
+    <div class="card form-card animate-in animate-delay-1">
+        <h2><span class="icon icon-blue">1</span> Personal Information</h2>
+        <div class="grid-2">
+            <div>
+                <label for="applicant_name">Full Name</label>
+                <input type="text" id="applicant_name" name="applicant_name" placeholder="e.g. John Smith">
+            </div>
+            <div>
+                <label for="job">Occupation</label>
+                <select id="job" name="job">
+                    <option value="Other">Other</option>
+                    <option value="Mgr">Manager</option>
+                    <option value="Office">Office</option>
+                    <option value="ProfExe">Professional / Executive</option>
+                    <option value="Sales">Sales</option>
+                    <option value="Self">Self-Employed</option>
+                </select>
+            </div>
+        </div>
+        <div class="grid-2">
+            <div>
+                <label for="yoj">Years at Current Job</label>
+                <input type="number" id="yoj" name="yoj" step="0.5" min="0" value="5" required>
+            </div>
+            <div>
+                <label for="debtinc">Debt-to-Income Ratio</label>
+                <input type="number" id="debtinc" name="debtinc" step="0.1" min="0" max="100" value="30" required>
+                <div class="input-hint">Your total monthly debt payments divided by monthly income (%)</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card form-card animate-in animate-delay-2">
+        <h2><span class="icon icon-blue">2</span> Loan Details</h2>
+        <div class="grid-2">
+            <div>
+                <label for="loan">Loan Amount ($)</label>
+                <input type="number" id="loan" name="loan" min="100" step="100" placeholder="e.g. 25,000" required>
+            </div>
+            <div>
+                <label for="reason">Loan Purpose</label>
+                <select id="reason" name="reason">
+                    <option value="HomeImp">Home Improvement</option>
+                    <option value="DebtCon">Debt Consolidation</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <div class="card form-card animate-in animate-delay-3">
+        <h2><span class="icon icon-green">3</span> Property Information</h2>
+        <div class="grid-2">
+            <div>
+                <label for="value">Property Value ($)</label>
+                <input type="number" id="value" name="value" min="0" step="1000" placeholder="e.g. 150,000" required>
+            </div>
+            <div>
+                <label for="mortdue">Existing Mortgage Balance ($)</label>
+                <input type="number" id="mortdue" name="mortdue" min="0" step="1000" placeholder="e.g. 80,000" required>
+            </div>
+        </div>
+    </div>
+
+    <div class="card form-card animate-in animate-delay-4">
+        <h2><span class="icon icon-yellow">4</span> Credit History</h2>
+        <div class="grid-3">
+            <div>
+                <label for="derog">Derogatory Reports</label>
+                <input type="number" id="derog" name="derog" min="0" value="0" required>
+                <div class="input-hint">Major negative items on credit report</div>
+            </div>
+            <div>
+                <label for="delinq">Delinquent Credit Lines</label>
+                <input type="number" id="delinq" name="delinq" min="0" value="0" required>
+            </div>
+            <div>
+                <label for="ninq">Recent Inquiries</label>
+                <input type="number" id="ninq" name="ninq" min="0" value="1" required>
+                <div class="input-hint">Hard pulls in last 6 months</div>
+            </div>
+        </div>
+        <div class="grid-2">
+            <div>
+                <label for="clage">Oldest Credit Line (months)</label>
+                <input type="number" id="clage" name="clage" min="0" step="1" placeholder="e.g. 180" required>
+            </div>
+            <div>
+                <label for="clno">Number of Credit Lines</label>
+                <input type="number" id="clno" name="clno" min="0" value="15" required>
+            </div>
+        </div>
+    </div>
+
+    <div class="submit-section animate-in animate-delay-4">
+        <button type="submit" class="btn-primary" onclick="showLoading()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            Check My Eligibility
+        </button>
+        <p class="fine-print">Your application will be evaluated by our ML pipeline with full explainability</p>
+    </div>
+</form>
+
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-content">
+        <div class="loading-ring"></div>
+        <h2 style="color:var(--text-primary); font-size:1.3rem; margin-bottom:0.4rem;">Processing Your Application</h2>
+        <p style="color:var(--text-secondary); font-size:0.9rem;">This typically takes 15&ndash;30 seconds</p>
+        <div class="loading-steps">
+            <div class="loading-step active" id="ls1">
+                <span class="step-icon">&#9679;</span>
+                Running XGBoost prediction model...
+            </div>
+            <div class="loading-step" id="ls2">
+                <span class="step-icon">&#9675;</span>
+                Computing SHAP explanations...
+            </div>
+            <div class="loading-step" id="ls3">
+                <span class="step-icon">&#9675;</span>
+                Generating decision email with Claude...
+            </div>
+            <div class="loading-step" id="ls4">
+                <span class="step-icon">&#9675;</span>
+                Running bias detection agent...
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Step indicator highlights
+document.querySelectorAll('.form-card').forEach((card, i) => {
+    card.addEventListener('focusin', () => {
+        document.querySelectorAll('.step').forEach((s, j) => {
+            s.classList.toggle('active', j <= i);
+        });
+    });
+});
+
+function showLoading() {
+    const form = document.getElementById('loanForm');
+    if (form.checkValidity()) {
+        document.getElementById('loadingOverlay').classList.add('show');
+        // Animate steps
+        const steps = [
+            { el: 'ls1', delay: 0 },
+            { el: 'ls2', delay: 3000 },
+            { el: 'ls3', delay: 7000 },
+            { el: 'ls4', delay: 14000 },
+        ];
+        steps.forEach(({ el, delay }, i) => {
+            setTimeout(() => {
+                const step = document.getElementById(el);
+                step.classList.add('active');
+                step.querySelector('.step-icon').innerHTML = '&#9679;';
+                if (i > 0) {
+                    const prev = document.getElementById(steps[i - 1].el);
+                    prev.classList.remove('active');
+                    prev.classList.add('done');
+                    prev.querySelector('.step-icon').innerHTML = '&#10003;';
+                }
+            }, delay);
+        });
+    }
+}
+</script>
+{% endblock %}

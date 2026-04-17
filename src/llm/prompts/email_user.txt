@@ -1,0 +1,20 @@
+Write a {{ decision }} email for the following home equity loan application.
+
+**Decision:** {{ decision_label }}
+**Confidence:** {{ confidence }}%
+
+**Application Summary:**
+- Loan Amount Requested: ${{ loan_amount }}
+- Property Value: ${{ property_value }}
+- Existing Mortgage Balance: ${{ mortgage_due }}
+- Loan Purpose: {{ reason }}
+- Occupation: {{ job }}
+- Years at Current Job: {{ yoj }}
+- Debt-to-Income Ratio: {{ debtinc }}
+
+**Top Reasons for This Decision (ranked by importance):**
+{% for r in reasons %}
+{{ loop.index }}. {{ r.explanation }} (impact: {{ r.direction }})
+{% endfor %}
+
+Write the email now.

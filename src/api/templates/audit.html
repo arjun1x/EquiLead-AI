@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% block title %}Audit Log - EquiLend AI{% endblock %}
+
+{% block extra_head %}
+<style>
+    .audit-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        flex-wrap: wrap;
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+    .audit-stats {
+        display: flex;
+        gap: 1.5rem;
+    }
+    .audit-stat {
+        text-align: center;
+    }
+    .audit-stat .num {
+        font-size: 1.5rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+    }
+    .audit-stat .lbl {
+        font-size: 0.72rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-weight: 600;
+    }
+
+    .audit-table-wrap {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    .audit-table-wrap::-webkit-scrollbar { height: 6px; }
+    .audit-table-wrap::-webkit-scrollbar-track { background: transparent; }
+    .audit-table-wrap::-webkit-scrollbar-thumb { background: var(--text-muted); border-radius: 3px; }
+
+    .audit-table th {
+        position: sticky;
+        top: 0;
+        background: var(--bg-card);
+        z-index: 2;
+    }
+    .audit-table td {
+        white-space: nowrap;
+    }
+    .audit-table .col-id {
+        color: var(--text-muted);
+        font-variant-numeric: tabular-nums;
+    }
+    .audit-table .col-time {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+        font-variant-numeric: tabular-nums;
+    }
+    .audit-table .col-amount {
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+    }
+    .audit-table .col-prob {
+        font-variant-numeric: tabular-nums;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 4rem 2rem;
+    }
+    .empty-icon {
+        width: 64px; height: 64px;
+        border-radius: 50%;
+        background: var(--accent-glow);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 1.25rem;
+    }
+    .empty-state h3 {
+        font-size: 1.1rem;
+        margin-bottom: 0.5rem;
+        color: var(--text-primary);
+    }
+    .empty-state p {
+        color: var(--text-secondary);
+        font-size: 0.92rem;
+        margin-bottom: 1.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="audit-header animate-in">
+    <div class="page-header" style="margin-bottom:0;">
+        <h1>Audit Log</h1>
+        <p class="subtitle">Full pipeline trace for every loan decision</p>
+    </div>
+    {% if records %}
+    <div class="audit-stats">
+        <div class="audit-stat">
+            <div class="num" style="color:var(--accent);">{{ records|length }}</div>
+            <div class="lbl">Total</div>
+        </div>
+        <div class="audit-stat">
+            <div class="num" style="color:var(--success);">{{ records|selectattr('decision', 'equalto', 'approved')|list|length }}</div>
+            <div class="lbl">Approved</div>
+        </div>
+        <div class="audit-stat">
+            <div class="num" style="color:var(--danger);">{{ records|selectattr('decision', 'equalto', 'denied')|list|length }}</div>
+            <div class="lbl">Denied</div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{% if records %}
+<div class="card animate-in animate-delay-1" style="padding:0; overflow:hidden;">
+    <div class="audit-table-wrap">
+        <table class="audit-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Time</th>
+                    <th>Applicant</th>
+                    <th>Loan Amount</th>
+                    <th>Decision</th>
+                    <th>Default Prob</th>
+                    <th>Bias Score</th>
+                    <th>Bias Action</th>
+                    <th>Rewrites</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in records %}
+                <tr>
+                    <td class="col-id">{{ r.id }}</td>
+                    <td class="col-time">{{ r.created_at.strftime('%b %d, %Y %H:%M') if r.created_at else 'N/A' }}</td>
+                    <td style="font-weight:500;">{{ r.applicant_name or 'Anonymous' }}</td>
+                    <td class="col-amount">${{ "{:,.0f}".format(r.loan_amount) }}</td>
+                    <td>
+                        {% if r.decision == "approved" %}
+                        <span class="badge badge-green">Approved</span>
+                        {% else %}
+                        <span class="badge badge-red">Denied</span>
+                        {% endif %}
+                    </td>
+                    <td class="col-prob">{{ "%.1f"|format(r.default_probability * 100) }}%</td>
+                    <td class="col-prob">{{ "%.2f"|format(r.bias_score) }}</td>
+                    <td>
+                        {% if r.bias_action == "send" %}
+                        <span class="badge badge-green">Clean</span>
+                        {% elif r.bias_action == "rewritten" %}
+                        <span class="badge badge-yellow">Rewritten</span>
+                        {% else %}
+                        <span class="badge badge-red">Escalated</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align:center; font-variant-numeric:tabular-nums;">{{ r.bias_rewrites }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="card animate-in animate-delay-1">
+    <div class="empty-state">
+        <div class="empty-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
+        <h3>No decisions yet</h3>
+        <p>Submit your first loan application to see the full audit trail here.</p>
+        <a href="/" class="btn btn-primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Application
+        </a>
+    </div>
+</div>
+{% endif %}
+
+{% if records %}
+<div class="actions-bar animate-in animate-delay-2" style="display:flex; gap:0.75rem; margin-top:1.5rem;">
+    <a href="/" class="btn btn-primary">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        New Application
+    </a>
+</div>
+{% endif %}
+{% endblock %}
