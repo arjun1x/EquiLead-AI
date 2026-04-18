@@ -140,6 +140,38 @@
             background: var(--accent-glow);
         }
 
+        .user-menu {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-left: 1rem;
+            padding-left: 1rem;
+            border-left: 1px solid var(--border);
+        }
+        .user-avatar {
+            width: 30px; height: 30px;
+            border-radius: 50%;
+            border: 1px solid var(--border-hover);
+            object-fit: cover;
+        }
+        .user-name {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+        .logout-btn {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.8rem;
+            padding: 0.35rem 0.7rem;
+            border-radius: 6px;
+            transition: all 0.2s ease;
+        }
+        .logout-btn:hover {
+            color: var(--danger);
+            background: rgba(248, 113, 113, 0.1);
+        }
+
         .container {
             max-width: 960px;
             margin: 0 auto;
@@ -428,6 +460,15 @@
         <div class="links">
             <a href="/" {% if request.url.path == "/" %}class="active"{% endif %}>Apply</a>
             <a href="/audit" {% if request.url.path == "/audit" %}class="active"{% endif %}>Audit Log</a>
+            {% if user %}
+            <div class="user-menu">
+                {% if user.picture %}
+                <img src="{{ user.picture }}" alt="" class="user-avatar" referrerpolicy="no-referrer">
+                {% endif %}
+                <span class="user-name">{{ user.name }}</span>
+                <a href="/logout" class="logout-btn">Sign out</a>
+            </div>
+            {% endif %}
         </div>
     </nav>
     <div class="container">

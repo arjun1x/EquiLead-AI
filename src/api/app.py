@@ -4,17 +4,22 @@ FastAPI web application — EquiLend AI loan decisioning platform.
 
 import os
 import json
+import hashlib
+import secrets
 from pathlib import Path
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 import xgboost as xgb
 import shap
 import pickle
 import pandas as pd
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
 from src.data.schema import (
     MODEL_FEATURES, CATEGORICAL_FEATURES, NUMERIC_FEATURES,
@@ -27,11 +32,39 @@ from src.audit.models import init_db, Session, LoanDecision
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MODELS_DIR = PROJECT_ROOT / "models"
 TEMPLATES_DIR = PROJECT_ROOT / "src" / "api" / "templates"
+USERS_FILE = PROJECT_ROOT / "data" / "users.json"
 
 model = None
 explainer = None
 label_encoders = None
 
+
+# ── Simple user store ────────────────────────────────────
+
+def _load_users() -> dict:
+    if USERS_FILE.exists():
+        return json.loads(USERS_FILE.read_text())
+    return {}
+
+
+def _save_users(users: dict):
+    USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    USERS_FILE.write_text(json.dumps(users, indent=2))
+
+
+def _hash_password(password: str, salt: str = "") -> tuple[str, str]:
+    if not salt:
+        salt = secrets.token_hex(16)
+    hashed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000).hex()
+    return hashed, salt
+
+
+def _verify_password(password: str, hashed: str, salt: str) -> bool:
+    check, _ = _hash_password(password, salt)
+    return check == hashed
+
+
+# ── App setup ────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -59,7 +92,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="EquiLend AI", lifespan=lifespan)
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.environ.get("SESSION_SECRET", "equilend-dev-secret-change-me"),
+)
+
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+def get_user(request: Request) -> dict | None:
+    return request.session.get("user")
 
 
 def predict_single(applicant_data: dict) -> tuple[float, float]:
@@ -78,9 +121,75 @@ def predict_single(applicant_data: dict) -> tuple[float, float]:
     return float(proba[1]), float(max(proba) * 100)
 
 
+# ── Auth routes ──────────────────────────────────────────
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    if get_user(request):
+        return RedirectResponse(url="/", status_code=302)
+    error = request.query_params.get("error")
+    return templates.TemplateResponse(request, "login.html", {"error": error})
+
+
+@app.post("/login", response_class=HTMLResponse)
+async def login_submit(request: Request, email: str = Form(...), password: str = Form(...)):
+    users = _load_users()
+    user = users.get(email)
+    if not user or not _verify_password(password, user["password"], user["salt"]):
+        return templates.TemplateResponse(request, "login.html", {
+            "error": "Invalid email or password.",
+        })
+    request.session["user"] = {"name": user["name"], "email": email}
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.get("/register", response_class=HTMLResponse)
+async def register_page(request: Request):
+    if get_user(request):
+        return RedirectResponse(url="/", status_code=302)
+    error = request.query_params.get("error")
+    return templates.TemplateResponse(request, "register.html", {"error": error})
+
+
+@app.post("/register", response_class=HTMLResponse)
+async def register_submit(
+    request: Request,
+    name: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+):
+    users = _load_users()
+    if email in users:
+        return templates.TemplateResponse(request, "register.html", {
+            "error": "An account with this email already exists.",
+        })
+    if len(password) < 6:
+        return templates.TemplateResponse(request, "register.html", {
+            "error": "Password must be at least 6 characters.",
+        })
+    hashed, salt = _hash_password(password)
+    users[email] = {"name": name, "password": hashed, "salt": salt}
+    _save_users(users)
+    request.session["user"] = {"name": name, "email": email}
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse(url="/login", status_code=302)
+
+
+# ── App routes (protected) ───────────────────────────────
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    return templates.TemplateResponse(request, "form.html")
+    user = get_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(request, "form.html", {"user": user})
 
 
 @app.post("/apply", response_class=HTMLResponse)
@@ -100,6 +209,10 @@ async def apply_loan(
     clno: float = Form(0),
     debtinc: float = Form(0),
 ):
+    user = get_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
     applicant_data = {
         "LOAN": loan, "MORTDUE": mortdue, "VALUE": value,
         "REASON": reason, "JOB": job, "YOJ": yoj,
@@ -146,6 +259,7 @@ async def apply_loan(
     session.close()
 
     return templates.TemplateResponse(request, "result.html", {
+        "user": user,
         "applicant_name": applicant_name or "Applicant",
         "decision": decision,
         "default_prob": f"{default_prob:.1%}",
@@ -162,9 +276,14 @@ async def apply_loan(
 
 @app.get("/audit", response_class=HTMLResponse)
 async def audit_log(request: Request):
+    user = get_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
     session = Session()
     records = session.query(LoanDecision).order_by(LoanDecision.created_at.desc()).limit(50).all()
     session.close()
     return templates.TemplateResponse(request, "audit.html", {
+        "user": user,
         "records": records,
     })

@@ -6,6 +6,7 @@
 # ── Data (never commit raw loan data) ────────────────────
 data/raw/
 data/processed/
+data/users.json
 *.csv
 *.parquet
 *.xlsx

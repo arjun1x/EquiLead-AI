@@ -28,28 +28,6 @@
         line-height: 1.6;
     }
 
-    .trust-badges {
-        display: flex;
-        justify-content: center;
-        gap: 2rem;
-        margin-top: 1.75rem;
-        flex-wrap: wrap;
-    }
-    .trust-badge {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        color: var(--text-muted);
-        font-size: 0.82rem;
-        font-weight: 500;
-    }
-    .trust-badge .dot {
-        width: 8px; height: 8px;
-        border-radius: 50%;
-        background: var(--success);
-        box-shadow: 0 0 8px var(--success-glow);
-    }
-
     .step-indicator {
         display: flex;
         justify-content: center;
@@ -195,11 +173,6 @@
         Our AI evaluates your application with explainable ML, generates a personalized decision,
         and audits for bias &mdash; all in seconds.
     </p>
-    <div class="trust-badges">
-        <div class="trust-badge"><div class="dot"></div> XGBoost ML Model</div>
-        <div class="trust-badge"><div class="dot"></div> SHAP Explainability</div>
-        <div class="trust-badge"><div class="dot"></div> AI Bias Detection</div>
-    </div>
 </div>
 
 <div class="step-indicator animate-in animate-delay-1">
@@ -250,7 +223,7 @@
         <div class="grid-2">
             <div>
                 <label for="loan">Loan Amount ($)</label>
-                <input type="number" id="loan" name="loan" min="100" step="100" placeholder="e.g. 25,000" required>
+                <input type="number" id="loan" name="loan" min="100" step="any" placeholder="e.g. 25,000" required>
             </div>
             <div>
                 <label for="reason">Loan Purpose</label>
@@ -267,11 +240,11 @@
         <div class="grid-2">
             <div>
                 <label for="value">Property Value ($)</label>
-                <input type="number" id="value" name="value" min="0" step="1000" placeholder="e.g. 150,000" required>
+                <input type="number" id="value" name="value" min="0" step="any" placeholder="e.g. 150,000" required>
             </div>
             <div>
                 <label for="mortdue">Existing Mortgage Balance ($)</label>
-                <input type="number" id="mortdue" name="mortdue" min="0" step="1000" placeholder="e.g. 80,000" required>
+                <input type="number" id="mortdue" name="mortdue" min="0" step="any" placeholder="e.g. 80,000" required>
             </div>
         </div>
     </div>
