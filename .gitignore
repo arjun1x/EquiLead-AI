@@ -1,0 +1,25 @@
+# Secrets and local config
+.env
+secrets.enc
+*.key
+*.pem
+
+# Local data, never commit customer data or decisions
+*.sqlite3
+*.db
+*.csv
+*.parquet
+
+# Production model artifacts
+xgb_model.json
+label_encoders.pkl
+*.pkl
+*.joblib
+
+# Generated
+__pycache__/
+*.py[cod]
+.pytest_cache/
+screenshots/
+*.png
+*.jpg
