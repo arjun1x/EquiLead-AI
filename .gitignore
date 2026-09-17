@@ -1,22 +1,25 @@
-# Secrets and local config
+# Secrets and local config — never commit credentials
 .env
 secrets.enc
 *.key
 *.pem
 
-# Local data, never commit customer data or decisions
+# Local data — never commit applicant records or decisions
 *.sqlite3
 *.db
-*.csv
 *.parquet
+heloc_synthetic.csv
+*.csv
 
-# Production model artifacts
-xgb_model.json
-label_encoders.pkl
+# Trained artifacts are reproducible (python train.py, deterministic seed) and are regenerated automatically
+# at first start when the registry is missing. Keep them out of version control.
+model_*.pkl
 *.pkl
 *.joblib
+model_registry.json
+training_report.json
 
-# Generated
+# Generated caches and screenshots
 __pycache__/
 *.py[cod]
 .pytest_cache/

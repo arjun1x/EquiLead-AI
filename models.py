@@ -1,19 +1,18 @@
-"""Flat-project storage. New database; existing repository data is never overwritten.
+"""Storage for EquiLead: applications, model runs, letters, users and an append-only hash-chained audit timeline.
 
-Two append-only hash chains live here:
-  * loan_decisions.record_hash chains every model output (inputs, score, reasons, drafts) to the record before it.
-  * audit_events.hash chains every workspace action (logins, exports, human reviews, purges).
-Human review fields are written next to the decision but are NOT part of the sealed payload; they are
-recorded in the audit chain instead, so the model output can never be silently rewritten.
+Nothing about a decision is ever silently overwritten: every change to an application is written as an
+audit event carrying the previous and updated values, and audit events chain to each other by hash.
 """
+from __future__ import annotations
+
 import datetime as dt
 import hashlib
 import json
 import os
 from pathlib import Path
 
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine, inspect, select, text
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, create_engine, inspect, select, text
+from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
 ROOT = Path(__file__).resolve().parent
 DEMO_MODE = os.getenv("DEMO_MODE", "1") == "1"
@@ -24,8 +23,6 @@ Session = sessionmaker(bind=engine, expire_on_commit=False)
 
 ROLES = {"analyst": 1, "reviewer": 2, "admin": 3}
 GENESIS = "0" * 64
-INPUT_FIELDS = ["loan_amount", "mortgage_due", "property_value", "reason", "job", "yoj",
-                "derog", "delinq", "clage", "ninq", "clno", "debtinc"]
 
 
 def utcnow():
@@ -41,16 +38,11 @@ def chain_hash(prev_hash, payload):
 
 
 def _iso(value):
-    """SQLite drops tzinfo, so hashes are computed on naive UTC timestamps at write and read time."""
     if value is None:
         return None
     if value.tzinfo is not None:
         value = value.astimezone(dt.timezone.utc).replace(tzinfo=None)
     return value.isoformat()
-
-
-def _num(value):
-    return None if value is None else float(value)
 
 
 class Base(DeclarativeBase):
@@ -67,144 +59,157 @@ class User(Base):
     created_at = Column(DateTime, default=utcnow)
 
 
-class LoanDecision(Base):
-    __tablename__ = "loan_decisions"
+class Application(Base):
+    __tablename__ = "applications"
     id = Column(Integer, primary_key=True)
+    reference = Column(String(24), unique=True, index=True)
     owner_email = Column(String(254), nullable=False, index=True)
-    created_at = Column(DateTime, default=utcnow)
-    applicant_name = Column(String(200))
-    loan_amount = Column(Float)
-    mortgage_due = Column(Float)
-    property_value = Column(Float)
-    reason = Column(String(50))
-    job = Column(String(50))
-    yoj = Column(Float)
-    derog = Column(Float)
-    delinq = Column(Float)
-    clage = Column(Float)
-    ninq = Column(Float)
-    clno = Column(Float)
-    debtinc = Column(Float)
-    # Model output (sealed by record_hash)
-    decision = Column(String(20))
-    default_probability = Column(Float)      # score used against the threshold (calibrated when available)
-    raw_score = Column(Float)                # uncalibrated class-weighted model score
-    calibrated_probability = Column(Float)   # None unless a calibrator was applied
-    confidence = Column(Float)
-    shap_reasons = Column(Text)
-    reason_codes = Column(Text)              # adverse-action reason codes (JSON list)
-    reason_code_version = Column(String(40))
-    email_draft = Column(Text)
-    final_email = Column(Text)
-    bias_score = Column(Float, nullable=True)
-    bias_action = Column(String(20))
-    bias_rewrites = Column(Integer, default=0)
-    bias_audit_trail = Column(Text)
-    model_version = Column(String(100))
-    dataset_version = Column(String(100))
-    training_date = Column(String(40))
-    threshold = Column(Float)
-    calibration = Column(String(80))
+    state = Column(String(30), nullable=False, default="draft", index=True)
+    created_at = Column(DateTime, default=utcnow, index=True)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+    applicant_name = Column(String(120), default="")
+    product_type = Column(String(30), default="heloc")
+    inputs = Column(JSON, default=dict)           # raw form values (draft may be partial)
+    derived = Column(JSON, default=dict)          # DerivedMetrics
+    validation = Column(JSON, default=dict)       # errors / flags at last submit
+    scored_at = Column(DateTime)
+    scoring_hash = Column(String(64))
+    consensus = Column(JSON, default=dict)
+    policy = Column(JSON, default=dict)
+    reason_codes = Column(JSON, default=dict)
+    explanations = Column(JSON, default=dict)     # per model drivers + counterfactuals
+    human_decision = Column(String(30))
+    decision_note = Column(Text)
+    approved_amount = Column(Float)
+    conditions = Column(JSON, default=list)
+    override = Column(Boolean, default=False)
+    override_reason = Column(Text)
+    decided_by = Column(String(254))
+    decided_at = Column(DateTime)
+    signoff_name = Column(String(120))
+    signoff_role = Column(String(80))
+    letter_approved_at = Column(DateTime)
+    finalized_at = Column(DateTime)
+    withdrawn_reason = Column(Text)
     is_demo = Column(Integer, default=0)
-    prev_hash = Column(String(64))
-    record_hash = Column(String(64))
-    # Human review (not sealed; every change is an audit event)
-    human_decision = Column(String(20))      # pending | approved | declined
-    human_note = Column(Text)
-    reviewed_by = Column(String(254))
-    reviewed_at = Column(DateTime)
-    outcome = Column(Integer, nullable=True)  # observed label for monitoring: 1 = defaulted, 0 = repaid
+    model_runs = relationship("ModelRun", back_populates="application", order_by="ModelRun.id")
+    letters = relationship("Letter", back_populates="application", order_by="Letter.id")
 
-    def set_shap(self, value):
-        self.shap_reasons = json.dumps(value)
+    def latest_runs(self):
+        """Most recent run for each model key."""
+        latest = {}
+        for run in self.model_runs:
+            latest[run.model_key] = run
+        return latest
 
-    def get_shap(self):
-        return json.loads(self.shap_reasons or "[]")
+    def current_letter(self):
+        return self.letters[-1] if self.letters else None
 
-    def set_bias_trail(self, value):
-        self.bias_audit_trail = json.dumps(value)
+    def public_summary(self):
+        return {"id": self.id, "reference": self.reference, "state": self.state, "applicant_name": self.applicant_name,
+                "product_type": self.product_type, "created_at": _iso(self.created_at), "scored_at": _iso(self.scored_at),
+                "consensus": self.consensus, "policy": self.policy, "reason_codes": self.reason_codes,
+                "human_decision": self.human_decision, "override": self.override, "is_demo": self.is_demo}
 
-    def get_bias_trail(self):
-        return json.loads(self.bias_audit_trail or "[]")
 
-    def set_reason_codes(self, value):
-        self.reason_codes = json.dumps(value)
+class ModelRun(Base):
+    __tablename__ = "model_runs"
+    id = Column(Integer, primary_key=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+    batch = Column(Integer, default=1)
+    created_at = Column(DateTime, default=utcnow)
+    model_key = Column(String(30), nullable=False)
+    model_name = Column(String(80))
+    model_version = Column(String(60))
+    model_hash = Column(String(64))
+    preprocessing_version = Column(String(30))
+    probability = Column(Float)
+    raw_probability = Column(Float)
+    risk_band = Column(String(2))
+    recommendation = Column(String(30))
+    decision_threshold = Column(Float)
+    band_cutoffs = Column(JSON, default=dict)
+    drivers = Column(JSON, default=dict)
+    explainer_method = Column(String(80))
+    processing_ms = Column(Float)
+    scoring_ms = Column(Float)
+    in_range = Column(Boolean)
+    out_of_range = Column(JSON, default=list)
+    error = Column(Text)
+    application = relationship("Application", back_populates="model_runs")
 
-    def get_reason_codes(self):
-        return json.loads(self.reason_codes or "[]")
+    def as_dict(self):
+        return {"model_key": self.model_key, "model_name": self.model_name, "model_version": self.model_version,
+                "model_hash": self.model_hash, "preprocessing_version": self.preprocessing_version, "probability": self.probability,
+                "raw_probability": self.raw_probability, "risk_band": self.risk_band, "recommendation": self.recommendation,
+                "decision_threshold": self.decision_threshold, "band_cutoffs": self.band_cutoffs, "drivers": self.drivers,
+                "explainer_method": self.explainer_method, "processing_ms": self.processing_ms, "scoring_ms": self.scoring_ms,
+                "in_range": self.in_range, "out_of_range": self.out_of_range, "error": self.error, "batch": self.batch}
 
-    def hash_payload(self):
-        inputs = {k: getattr(self, k) for k in INPUT_FIELDS}
-        return {
-            "owner_email": self.owner_email, "applicant_name": self.applicant_name,
-            "inputs": {k: (v if k in ("reason", "job") else _num(v)) for k, v in inputs.items()},
-            "decision": self.decision, "default_probability": _num(self.default_probability),
-            "raw_score": _num(self.raw_score), "calibrated_probability": _num(self.calibrated_probability),
-            "confidence": _num(self.confidence), "shap_reasons": self.shap_reasons,
-            "reason_codes": self.reason_codes, "reason_code_version": self.reason_code_version,
-            "email_draft": self.email_draft, "final_email": self.final_email,
-            "bias_score": _num(self.bias_score), "bias_action": self.bias_action,
-            "bias_rewrites": self.bias_rewrites, "bias_audit_trail": self.bias_audit_trail,
-            "model_version": self.model_version, "dataset_version": self.dataset_version,
-            "training_date": self.training_date, "threshold": _num(self.threshold),
-            "calibration": self.calibration, "is_demo": self.is_demo, "created_at": _iso(self.created_at),
-        }
 
-    def seal(self, prev_hash):
-        self.prev_hash = prev_hash or GENESIS
-        self.record_hash = chain_hash(self.prev_hash, self.hash_payload())
-        return self.record_hash
+class Letter(Base):
+    __tablename__ = "letters"
+    id = Column(Integer, primary_key=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+    version = Column(Integer, default=1)
+    template_version = Column(String(30))
+    letter_type = Column(String(30))
+    draft_text = Column(Text)
+    issues = Column(JSON, default=list)
+    corrected_text = Column(Text)
+    decision_snapshot = Column(JSON, default=dict)
+    status = Column(String(20), default="draft")   # draft | approved | superseded
+    created_by = Column(String(254))
+    created_at = Column(DateTime, default=utcnow)
+    approved_by = Column(String(254))
+    approved_at = Column(DateTime)
+    application = relationship("Application", back_populates="letters")
 
 
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     id = Column(Integer, primary_key=True)
-    created_at = Column(DateTime, default=utcnow)
+    created_at = Column(DateTime, default=utcnow, index=True)
     actor = Column(String(254))
     action = Column(String(40), index=True)
-    record_id = Column(Integer, nullable=True)
+    application_id = Column(Integer, index=True)
     detail = Column(Text)
     prev_hash = Column(String(64))
     hash = Column(String(64))
 
     def hash_payload(self):
-        return {"actor": self.actor, "action": self.action, "record_id": self.record_id,
+        return {"actor": self.actor, "action": self.action, "application_id": self.application_id,
                 "detail": self.detail, "created_at": _iso(self.created_at)}
 
+    def detail_dict(self):
+        try:
+            return json.loads(self.detail or "{}")
+        except json.JSONDecodeError:
+            return {}
 
-def latest_decision_hash(db):
-    return db.scalar(select(LoanDecision.record_hash).order_by(LoanDecision.id.desc()).limit(1)) or GENESIS
+
+Index("ix_applications_owner_state", Application.owner_email, Application.state)
 
 
-def append_audit(db, actor, action, record_id=None, detail=None):
-    """Append one immutable event. Callers commit."""
+def append_audit(db, actor, action, application_id=None, detail=None):
+    """Append one immutable event to the chain. Callers commit."""
     last = db.scalar(select(AuditEvent.hash).order_by(AuditEvent.id.desc()).limit(1))
-    event = AuditEvent(actor=actor, action=action, record_id=record_id,
-                       detail=canonical(detail or {}), created_at=utcnow())
+    event = AuditEvent(actor=actor, action=action, application_id=application_id, detail=canonical(detail or {}), created_at=utcnow())
     event.prev_hash = last or GENESIS
     event.hash = chain_hash(event.prev_hash, event.hash_payload())
     db.add(event)
     return event
 
 
-def verify_decision_chain(db):
-    """Recompute every sealed decision hash. Gaps left by a retention purge are allowed only when the
-    purge event recorded the hash of the deleted record."""
-    purged = set()
-    for event in db.scalars(select(AuditEvent).where(AuditEvent.action == "retention_purge")):
-        purged.update(json.loads(event.detail or "{}").get("hashes", []))
-    prev, checked, unsealed, first_bad = GENESIS, 0, 0, None
-    for record in db.scalars(select(LoanDecision).order_by(LoanDecision.id)):
-        if not record.record_hash:
-            unsealed += 1
-            prev = GENESIS
-            continue
-        linked = record.prev_hash == prev or record.prev_hash in purged
-        if not linked or chain_hash(record.prev_hash, record.hash_payload()) != record.record_hash:
-            first_bad = first_bad or record.id
-        prev = record.record_hash
-        checked += 1
-    return {"ok": first_bad is None, "checked": checked, "unsealed": unsealed, "first_bad_id": first_bad}
+def record_change(db, actor, action, application, changes: dict, extra: dict | None = None):
+    """Audit a field change with previous and updated values, then apply it."""
+    previous = {field: getattr(application, field) for field in changes}
+    for field, value in changes.items():
+        setattr(application, field, value)
+    detail = {"previous": previous, "updated": changes}
+    if extra:
+        detail.update(extra)
+    return append_audit(db, actor, action, application.id, detail)
 
 
 def verify_audit_chain(db):
@@ -217,8 +222,13 @@ def verify_audit_chain(db):
     return {"ok": first_bad is None, "checked": checked, "first_bad_id": first_bad}
 
 
+def next_reference(db):
+    year = utcnow().year
+    count = db.scalar(select(Application.id).order_by(Application.id.desc()).limit(1)) or 0
+    return f"EQ-{year}-{count + 1:06d}"
+
+
 def _migrate():
-    """Add columns introduced after a database was created. SQLite has no ALTER ... ADD IF NOT EXISTS."""
     inspector = inspect(engine)
     with engine.begin() as conn:
         for table in Base.metadata.sorted_tables:

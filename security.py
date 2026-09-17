@@ -119,16 +119,18 @@ def purge_expired(days=None, actor="system"):
     """Delete decision records older than the retention window. The audit chain keeps the hashes of
     the deleted records so the decision chain still verifies."""
     from sqlalchemy import select
-    from models import Session, LoanDecision, append_audit, utcnow
+    from models import Session, Application, Letter, ModelRun, append_audit, utcnow
     days = int(os.getenv("RETENTION_DAYS", "0")) if days is None else int(days)
     if days <= 0:
         return 0
     cutoff = utcnow().replace(tzinfo=None) - dt.timedelta(days=days)
     with Session() as db:
-        rows = db.scalars(select(LoanDecision).where(LoanDecision.created_at < cutoff)).all()
+        rows = db.scalars(select(Application).where(Application.created_at < cutoff)).all()
         ids = [row.id for row in rows]
-        hashes = [row.record_hash for row in rows if row.record_hash]
+        hashes = [row.scoring_hash for row in rows if row.scoring_hash]
         for row in rows:
+            for child in list(row.model_runs) + list(row.letters):
+                db.delete(child)
             db.delete(row)
         append_audit(db, actor, "retention_purge", None, {"days": days, "deleted": len(ids), "ids": ids, "hashes": hashes})
         db.commit()

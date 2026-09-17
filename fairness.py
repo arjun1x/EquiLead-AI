@@ -1,140 +1,119 @@
-"""Fair-lending validation helpers.
+"""Fairness and responsible-AI monitoring metrics.
 
-The model never sees protected attributes (model_card.py refuses a card that lists any). Testing for
-disparate impact still needs group membership, which must come from a governed source, never from the
-application form. This module computes the standard subgroup tests on whatever grouping the governance
-process supplies. Nothing here replaces legal and compliance review; it produces the evidence for it.
+Computed on synthetic evaluation data with protected attributes that are stored beside, never inside, the
+model feature vector. Every result is a monitoring signal for human and legal review. Passing a metric does
+not make a model "fair" in any legal sense, and small groups are flagged as unreliable.
 
-Command line:
-  python fairness.py [--days N] [--group job reason] [--json report.json]
+Command line:  python fairness.py   (prints the training-time fairness evaluation from training_report.json)
 """
-import argparse
-import datetime as dt
+from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parent
+MIN_GROUP_N = 30
+CAUTION_GROUP_N = 100
+FOUR_FIFTHS = 0.80
+PARITY_TOLERANCE = 0.10
+ERROR_GAP_TOLERANCE = 0.10
 
 PROTECTED_CLASSES = ["race", "color", "religion", "national origin", "sex", "marital status", "age",
                      "receipt of public assistance", "good-faith exercise of consumer credit rights"]
-
 GOVERNANCE = {
-    "model_inputs": "Protected attributes and obvious proxies are excluded from model inputs. The model card must list "
-                    "protected_attributes_in_model as empty or the app refuses to load it.",
-    "test_data": "Group membership for testing comes from a governed monitoring dataset (self-reported under HMDA "
-                 "rules where applicable, or a documented proxy method such as BISG approved by compliance). "
-                 "It is never captured on the application form or stored beside the decision.",
-    "tests": "Approval-rate disparate impact (four-fifths rule), false-positive and false-negative rate gaps "
-             "(equal opportunity), and score-distribution comparison per group, at each model release and "
-             "at least quarterly.",
-    "review": "Results, sample sizes, and any remediation go to the model risk and fair-lending reviewers named "
-              "in the model card before a release is approved.",
-    "reason_codes": "Adverse-action statements come only from the compliance-approved code table (reason_codes.py).",
+    "model_inputs": "Protected attributes and obvious proxies are excluded from the model feature contract (calculations.MODEL_FEATURES).",
+    "test_data": "Group membership for testing comes from a separate column set produced by the synthetic generator or, in production, "
+                 "from a governed monitoring dataset. It is never captured on the application form.",
+    "tests": "Selection rate, demographic parity difference, disparate-impact ratio, false-positive and false-negative rates and "
+             "equal-opportunity difference per model, with sample-size warnings, at every training run.",
+    "review": "Signals outside tolerance require fair-lending, model-risk and legal review before a release; they are not a verdict.",
 }
 
-DEFAULT_GROUPS = ("job", "reason")
-MIN_GROUP_N = 30
 
-
-def group_rates(rows, group_key, decision_key="decision", label_key="outcome"):
-    """Per-group approval/denial rates plus error rates where an observed outcome exists.
-    Positive class for the error rates is a default (label 1); a 'denied' recommendation is the positive prediction."""
-    groups = {}
-    for row in rows:
-        group = str(row.get(group_key) if row.get(group_key) not in (None, "") else "Unknown")
-        g = groups.setdefault(group, {"n": 0, "approved": 0, "denied": 0, "labeled": 0,
-                                      "tp": 0, "fp": 0, "fn": 0, "tn": 0})
-        g["n"] += 1
-        denied = row.get(decision_key) == "denied"
-        g["denied" if denied else "approved"] += 1
-        label = row.get(label_key)
-        if label in (0, 1):
-            g["labeled"] += 1
-            if denied and label == 1: g["tp"] += 1
-            elif denied and label == 0: g["fp"] += 1
-            elif not denied and label == 1: g["fn"] += 1
-            else: g["tn"] += 1
-    for g in groups.values():
-        g["approval_rate"] = g["approved"] / g["n"] if g["n"] else None
-        g["denial_rate"] = g["denied"] / g["n"] if g["n"] else None
-        positives, negatives = g["tp"] + g["fn"], g["fp"] + g["tn"]
-        g["tpr"] = g["tp"] / positives if positives else None
-        g["fnr"] = g["fn"] / positives if positives else None
-        g["fpr"] = g["fp"] / negatives if negatives else None
-    return groups
-
-
-def four_fifths(rates, min_n=MIN_GROUP_N):
-    """Approval-rate ratio of every group to the most-approved group of adequate size."""
-    eligible = {name: g for name, g in rates.items() if g["n"] >= min_n and g["approval_rate"] is not None}
-    if len(eligible) < 2:
-        return {"status": "INSUFFICIENT", "reference": None, "ratios": {}, "min_ratio": None, "min_n": min_n}
-    reference = max(eligible, key=lambda name: eligible[name]["approval_rate"])
-    ref_rate = eligible[reference]["approval_rate"]
-    ratios = {name: (g["approval_rate"] / ref_rate if ref_rate else None) for name, g in eligible.items()}
-    min_ratio = min(r for r in ratios.values() if r is not None)
-    return {"status": "PASS" if min_ratio >= 0.8 else "REVIEW", "reference": reference,
-            "ratios": ratios, "min_ratio": min_ratio, "min_n": min_n}
-
-
-def error_rate_gaps(rates, min_n=MIN_GROUP_N, tolerance=0.10):
-    """Largest difference in false-positive (good applicant declined) and false-negative rates between groups."""
-    eligible = {name: g for name, g in rates.items() if g["labeled"] >= min_n}
+def group_metrics(y_true, y_prob, groups, selected_cutoff: float) -> dict:
+    """Per-group selection (approval) rate and error rates.
+    A 'selection' is a favourable recommendation: probability below ``selected_cutoff``.
+    Positive class for error rates is a default (label 1); a non-selection is the positive prediction."""
+    y_true = np.asarray(y_true).astype(int)
+    y_prob = np.asarray(y_prob, dtype=float)
+    groups = np.asarray(groups).astype(str)
+    selected = y_prob < selected_cutoff
+    predicted_default = ~selected
     out = {}
-    for metric in ("fpr", "fnr"):
-        values = {name: g[metric] for name, g in eligible.items() if g[metric] is not None}
-        if len(values) < 2:
-            out[metric] = {"status": "INSUFFICIENT", "gap": None, "values": values}
-            continue
-        gap = max(values.values()) - min(values.values())
-        out[metric] = {"status": "PASS" if gap <= tolerance else "REVIEW", "gap": gap, "values": values}
+    for name in sorted(set(groups.tolist())):
+        mask = groups == name
+        n = int(mask.sum())
+        yt, pdft, sel = y_true[mask], predicted_default[mask], selected[mask]
+        positives, negatives = int((yt == 1).sum()), int((yt == 0).sum())
+        tp = int(((yt == 1) & pdft).sum()); fn = int(((yt == 1) & ~pdft).sum())
+        fp = int(((yt == 0) & pdft).sum()); tn = int(((yt == 0) & ~pdft).sum())
+        out[name] = {"n": n, "selection_rate": float(sel.mean()) if n else None, "actual_default_rate": float(yt.mean()) if n else None,
+                     "fpr": fp / negatives if negatives else None, "fnr": fn / positives if positives else None,
+                     "tpr": tp / positives if positives else None, "tnr": tn / negatives if negatives else None,
+                     "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+                     "warning": "too small for a reliable conclusion" if n < MIN_GROUP_N else ("small sample; interpret with caution" if n < CAUTION_GROUP_N else None)}
     return out
 
 
-def fair_lending_report(rows, group_keys=DEFAULT_GROUPS, min_n=MIN_GROUP_N):
-    report = {"n": len(rows), "labeled": sum(1 for r in rows if r.get("outcome") in (0, 1)),
-              "min_group_n": min_n, "groups": {}, "protected_classes": PROTECTED_CLASSES,
-              "governance": GOVERNANCE, "synthetic": all(r.get("is_demo") for r in rows) if rows else None}
-    for key in group_keys:
-        rates = group_rates(rows, key)
-        report["groups"][key] = {"rates": rates, "four_fifths": four_fifths(rates, min_n), "error_rates": error_rate_gaps(rates, min_n)}
-    return report
+def summarise(groups: dict) -> dict:
+    """Demographic parity difference, disparate-impact ratio, equal-opportunity difference, error gaps."""
+    eligible = {k: v for k, v in groups.items() if v["n"] >= MIN_GROUP_N and v["selection_rate"] is not None}
+    if len(eligible) < 2:
+        return {"status": "INSUFFICIENT", "reference": None, "demographic_parity_difference": None, "disparate_impact_ratio": None,
+                "equal_opportunity_difference": None, "fpr_gap": None, "fnr_gap": None, "notes": ["Fewer than two groups have enough records."]}
+    rates = {k: v["selection_rate"] for k, v in eligible.items()}
+    reference = max(rates, key=rates.get)
+    dpd = max(rates.values()) - min(rates.values())
+    dir_ratio = (min(rates.values()) / rates[reference]) if rates[reference] else None
+    tprs = {k: v["tpr"] for k, v in eligible.items() if v["tpr"] is not None}
+    fprs = {k: v["fpr"] for k, v in eligible.items() if v["fpr"] is not None}
+    fnrs = {k: v["fnr"] for k, v in eligible.items() if v["fnr"] is not None}
+    eod = (max(tprs.values()) - min(tprs.values())) if len(tprs) >= 2 else None
+    fpr_gap = (max(fprs.values()) - min(fprs.values())) if len(fprs) >= 2 else None
+    fnr_gap = (max(fnrs.values()) - min(fnrs.values())) if len(fnrs) >= 2 else None
+    notes = []
+    status = "WITHIN_TOLERANCE"
+    if dir_ratio is not None and dir_ratio < FOUR_FIFTHS:
+        status = "REVIEW"; notes.append(f"Disparate-impact ratio {dir_ratio:.2f} is below the four-fifths guideline.")
+    if dpd > PARITY_TOLERANCE:
+        status = "REVIEW"; notes.append(f"Selection-rate difference {dpd:.2f} exceeds {PARITY_TOLERANCE:.2f}.")
+    if eod is not None and eod > ERROR_GAP_TOLERANCE:
+        status = "REVIEW"; notes.append(f"Equal-opportunity difference {eod:.2f} exceeds {ERROR_GAP_TOLERANCE:.2f}.")
+    if fpr_gap is not None and fpr_gap > ERROR_GAP_TOLERANCE:
+        status = "REVIEW"; notes.append(f"False-positive-rate gap {fpr_gap:.2f} exceeds {ERROR_GAP_TOLERANCE:.2f}.")
+    small = [k for k, v in groups.items() if v["n"] < MIN_GROUP_N]
+    if small:
+        notes.append(f"Excluded small groups: {', '.join(small)}.")
+    return {"status": status, "reference": reference, "demographic_parity_difference": dpd, "disparate_impact_ratio": dir_ratio,
+            "equal_opportunity_difference": eod, "fpr_gap": fpr_gap, "fnr_gap": fnr_gap, "notes": notes}
 
 
-def rows_from_db(days=None):
-    from sqlalchemy import select
-    from models import Session, LoanDecision, init_db, utcnow
-    from monitoring import row_from_record
-    init_db()
-    with Session() as db:
-        query = select(LoanDecision)
-        if days:
-            query = query.where(LoanDecision.created_at >= utcnow().replace(tzinfo=None) - dt.timedelta(days=days))
-        return [row_from_record(r) for r in db.scalars(query.order_by(LoanDecision.id))]
+def evaluate(y_true, y_prob, protected: dict, selected_cutoff: float) -> dict:
+    """protected: {"sex": array, "age_band": array}. Returns {attribute: {"groups":..., "summary":...}}."""
+    return {attribute: {"groups": (g := group_metrics(y_true, y_prob, values, selected_cutoff)), "summary": summarise(g)}
+            for attribute, values in protected.items()}
 
 
-def _main(argv):
-    parser = argparse.ArgumentParser(description="Fair-lending subgroup report")
-    parser.add_argument("--days", type=int, default=None)
-    parser.add_argument("--group", nargs="+", default=list(DEFAULT_GROUPS))
-    parser.add_argument("--json", default=None, help="write the report to this file")
-    args = parser.parse_args(argv)
-    report = fair_lending_report(rows_from_db(args.days), tuple(args.group))
-    if report["synthetic"]:
-        print("NOTE: every record is a synthetic demo fixture. These numbers say nothing about a real model.\n")
-    for key, block in report["groups"].items():
-        print(f"== {key} ==")
-        for name, g in sorted(block["rates"].items()):
-            print(f"  {name:>10}: n={g['n']:>4} approval={g['approval_rate']:.1%} labeled={g['labeled']}"
-                  + (f" fpr={g['fpr']:.2f}" if g["fpr"] is not None else ""))
-        ff = block["four_fifths"]
-        print(f"  four-fifths: {ff['status']}" + (f" (min ratio {ff['min_ratio']:.2f} vs {ff['reference']})" if ff["min_ratio"] else ""))
-    if args.json:
-        Path(args.json).write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
-        print(f"\nWrote {args.json}")
+def compare_models(per_model: dict) -> list[dict]:
+    """Flatten {model_key: evaluate()} into rows for a comparison table."""
+    rows = []
+    for model_key, attributes in per_model.items():
+        for attribute, block in attributes.items():
+            s = block["summary"]
+            rows.append({"model": model_key, "attribute": attribute, "status": s["status"], "dpd": s["demographic_parity_difference"],
+                         "dir": s["disparate_impact_ratio"], "eod": s["equal_opportunity_difference"], "fpr_gap": s["fpr_gap"], "fnr_gap": s["fnr_gap"]})
+    return rows
 
 
 if __name__ == "__main__":
     sys.dont_write_bytecode = True
-    _main(sys.argv[1:])
+    report_path = ROOT / "training_report.json"
+    if not report_path.exists():
+        sys.exit("training_report.json not found. Run: python train.py")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    print("Fairness evaluation on the synthetic held-out test split (monitoring signals only)\n")
+    for row in compare_models(report["fairness"]):
+        print(f"{row['model']:>10} {row['attribute']:>9}  status={row['status']:<16} DPD={row['dpd']!s:>8} DIR={row['dir']!s:>8} EOD={row['eod']!s:>8}")

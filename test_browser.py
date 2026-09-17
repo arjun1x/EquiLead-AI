@@ -1,4 +1,5 @@
-"""Browser tests: desktop, tablet, mobile, reduced motion and no-WebGL. Run: python -m pytest -q test_browser.py
+"""Browser tests: sign-in, live figures, decision form, mobile layout, reduced motion, no-WebGL fallback.
+Run: python -m pytest -q -p no:cacheprovider test_browser.py
 
 Skips cleanly when the playwright package or a Chromium build is not installed
 (python -m pip install playwright && python -m playwright install chromium)."""
@@ -25,11 +26,11 @@ def base():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="equilead-browser-"))
-    env = {**os.environ, "DEMO_MODE": "1", "API_PORT": str(port), "PYTHONDONTWRITEBYTECODE": "1",
+    env = {**os.environ, "DEMO_MODE": "1", "API_PORT": str(port), "PYTHONDONTWRITEBYTECODE": "1", "SESSION_SECRET": "browser-test",
            "RATE_LIMIT_PER_MINUTE": "1000", "DATABASE_URL": f"sqlite:///{(tmp / 'browser.sqlite3').as_posix()}"}
     proc = subprocess.Popen([sys.executable, "run.py"], cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     url = f"http://127.0.0.1:{port}"
-    for _ in range(100):
+    for _ in range(300):
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.2):
                 break
@@ -40,144 +41,111 @@ def base():
     yield url
     proc.terminate()
     try:
-        proc.wait(5)
+        proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
         proc.kill()
 
 
 @pytest.fixture(scope="module")
 def browser():
-    with sync_api.sync_playwright() as pw:
+    with sync_api.sync_playwright() as p:
         try:
-            b = pw.chromium.launch(headless=True, args=GL_ARGS)
-        except Exception as exc:  # no browser build installed
-            pytest.skip(f"Chromium unavailable: {str(exc).splitlines()[0]}")
+            b = p.chromium.launch(args=GL_ARGS)
+        except Exception as exc:  # pragma: no cover - environment dependent
+            pytest.skip(f"Chromium not available: {exc}")
         yield b
         b.close()
 
 
-def demo(browser, base, role="analyst", **context):
-    ctx = browser.new_context(**context)
-    page = ctx.new_page()
+def page_for(browser, viewport=None, **kw):
+    context = browser.new_context(viewport=viewport or {"width": 1440, "height": 1000}, **kw)
+    page = context.new_page()
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
+    page.errors = errors
+    return page
+
+
+def sign_in(page, base, role="reviewer"):
     page.goto(base + "/login")
     page.select_option("#demo-role", role)
-    page.click("text=Explore demo workspace")
+    page.click("text=Open demo workspace")
     page.wait_for_url(base + "/")
-    return ctx, page, errors
 
 
-def test_desktop_scene_form_and_results(browser, base):
-    ctx, page, errors = demo(browser, base, viewport={"width": 1440, "height": 900})
-    page.wait_for_timeout(800)
-    assert page.locator(".scene-canvas canvas").count() == 1
-    assert page.locator(".scene-fallback").first.is_hidden()
-    page.focus(".scene-canvas"); page.keyboard.press("ArrowRight")
-    page.click("[data-scene-pause]")
-    assert page.locator("[data-scene-pause]").first.get_attribute("aria-pressed") == "true"
-    page.goto(base + "/apply")
-    page.fill("#loan", "50000"); page.fill("#value", "400000"); page.fill("#mortdue", "200000")
-    assert page.locator("[data-summary=ltv]").inner_text() == "62.5%"
-    assert page.locator("[data-summary=equity]").inner_text() == "$150,000"
-    page.fill("#loan", ""); page.click("[data-next]")
-    assert page.locator(".step-caption").inner_text() == "Step 1 of 3"  # invalid step blocks progress
-    page.fill("#loan", "50000"); page.click("[data-next]")
-    assert page.locator(".step-caption").inner_text() == "Step 2 of 3"
-    assert page.evaluate("document.activeElement.tagName") == "H2"       # focus moves to the step heading
+def test_sign_in_and_dashboard(browser, base):
+    page = page_for(browser)
+    sign_in(page, base)
+    assert page.locator("h1").inner_text().startswith("Your queue")
+    assert page.locator(".metric-row article").count() == 4
+    assert page.locator("text=Demonstration").first.is_visible()
+    assert page.errors == []
+
+
+def test_live_figures_come_from_the_server_and_submission_scores(browser, base):
+    page = page_for(browser)
+    sign_in(page, base)
+    page.goto(base + "/applications/new")
+    page.fill("#f-applicant_name", "Browser Case"); page.click("[data-next]")
+    page.fill("#f-annual_income", "120000"); page.fill("#f-verified_monthly_income", "9500"); page.fill("#f-employment_years", "6"); page.fill("#f-monthly_debt", "2400"); page.fill("#f-cash_reserves", "40000"); page.click("[data-next]")
+    page.fill("#f-credit_score", "735"); page.fill("#f-credit_history_years", "12"); page.fill("#f-delinquencies_24m", "0"); page.fill("#f-inquiries_6m", "1"); page.click("[data-next]")
+    page.fill("#f-property_value", "650000"); page.fill("#f-mortgage_balance", "310000"); page.fill("#f-requested_amount", "90000")
+    page.wait_for_function("document.querySelector('[data-live=cltv_after]').textContent.includes('%')")
+    assert page.text_content("[data-live=cltv_after]").strip() == "61.5%"
+    assert page.text_content("[data-calc-status]").strip() == "from the server"
     page.click("[data-next]")
-    assert page.locator("#application-review dt").count() == 13
-    for outcome, heading in (("approved", "Recommend approval."), ("denied", "Recommend decline."), ("review", "Recommend approval.")):
-        page.goto(base + "/apply"); page.click("[data-goto-step='2']")
-        page.select_option("#demo_outcome", outcome); page.click("[data-submit]")
-        page.wait_for_url(re.compile(r"/decisions/\d+"))
-        assert page.locator(".result-banner h2").inner_text() == heading
-        assert page.locator(".demo-alert").count() == 1
-        assert (page.locator(".draft-warning").count() == 1) == (outcome == "review")
-        assert (page.locator(".reason-code").count() > 0) == (outcome == "denied")
-    page.goto(base + "/audit?q=jamie&status=review")
-    assert page.locator(".records-table tbody tr").count() == 1
-    assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
-    assert errors == []
-    ctx.close()
+    for key in ("income_verification", "identity", "property_valuation", "mortgage_statement", "insurance", "credit_authorization"):
+        page.check(f"input[value={key}]")
+    assert page.locator("#application-review div").count() > 15
+    page.click("[data-submit]")
+    page.wait_for_url(re.compile(r"/applications/\d+$"))
+    assert page.locator(".data-table.compare tbody tr").count() == 3
+    assert page.locator("text=Consensus").first.is_visible()
+    assert page.errors == []
 
 
-def test_reviewer_records_decision_and_sees_monitoring(browser, base):
-    ctx, page, errors = demo(browser, base, role="reviewer", viewport={"width": 1440, "height": 900})
-    page.goto(base + "/decisions/1")
-    page.select_option("#human_decision", "approved"); page.fill("#note", "Verified income documents.")
-    page.click("text=Record decision")
-    page.wait_for_url(re.compile(r"/decisions/1$"))
-    assert "Recorded by a reviewer." in page.locator(".human-panel h2").inner_text()
-    page.click("text=Monitoring")
-    page.wait_for_url(base + "/monitoring")
-    assert page.locator(".monitor-grid .panel").count() >= 3
-    assert errors == []
-    ctx.close()
+def test_validation_returns_to_the_right_step(browser, base):
+    page = page_for(browser)
+    sign_in(page, base)
+    page.goto(base + "/applications/new")
+    page.fill("#f-applicant_name", "Bad Score")
+    page.click("[data-next]"); page.click("[data-next]")            # step 2 is empty -> browser validation stops here
+    assert page.locator("[data-step='1']").is_visible() and page.locator("[data-step='2']").is_hidden()
 
 
-def test_tablet_layout(browser, base):
-    ctx, page, errors = demo(browser, base, viewport={"width": 820, "height": 1180})
-    for path in ("/", "/apply", "/audit", "/decisions/1", "/guide"):
+def test_decision_form_reveals_override_reason(browser, base):
+    page = page_for(browser)
+    sign_in(page, base)
+    page.goto(base + "/applications?filter=needs_decision")
+    page.click(".data-table tbody tr a.ref >> nth=0")
+    page.wait_for_selector("[data-decision-form]")
+    recommended = page.get_attribute("[data-decision-form]", "data-recommended")
+    other = "declined" if recommended != "declined" else "approved"
+    page.check(f"input[name=human_decision][value={other}]")
+    assert page.locator("[data-override-field]").is_visible()
+    page.check(f"input[name=human_decision][value={recommended}]")
+    if recommended != "manual_review":
+        assert page.locator("[data-override-field]").is_hidden()
+    assert page.errors == []
+
+
+def test_mobile_layout_has_no_horizontal_overflow(browser, base):
+    page = page_for(browser, viewport={"width": 390, "height": 844})
+    sign_in(page, base)
+    for path in ("/", "/applications", "/applications/1", "/models", "/fairness"):
         page.goto(base + path)
-        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"), path
-    assert page.locator(".menu-toggle").is_hidden()
-    assert errors == []
-    ctx.close()
-
-
-def test_mobile_navigation_and_no_horizontal_scroll(browser, base):
-    ctx, page, errors = demo(browser, base, viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
-    for path in ("/", "/apply", "/audit", "/decisions/1", "/guide"):
-        page.goto(base + path)
-        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"), path
-    page.goto(base + "/")
-    assert page.locator(".menu-toggle").is_visible()
+        assert not page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth"), path
     page.click(".menu-toggle")
-    assert page.locator(".menu-toggle").get_attribute("aria-expanded") == "true"
-    assert page.evaluate("document.activeElement.closest('.sidebar') !== null")
+    assert page.locator(".sidebar").evaluate("el => el.classList.contains('open')")
     page.keyboard.press("Escape")
-    assert page.locator(".menu-toggle").get_attribute("aria-expanded") == "false"
     assert page.evaluate("document.activeElement.classList.contains('menu-toggle')")
-    assert errors == []
-    ctx.close()
 
 
-def test_reduced_motion_pauses_scene(browser, base):
-    ctx, page, errors = demo(browser, base, viewport={"width": 1200, "height": 800}, reduced_motion="reduce")
-    page.wait_for_timeout(600)
-    pause = page.locator("[data-scene-pause]").first
-    assert pause.get_attribute("aria-pressed") == "true"
-    assert pause.get_attribute("aria-label") == "Resume 3D motion"
-    assert errors == []
-    ctx.close()
-
-
-def test_no_webgl_shows_svg_fallback(browser, base):
-    ctx = browser.new_context(viewport={"width": 1200, "height": 800})
-    ctx.add_init_script(NO_WEBGL)
-    page = ctx.new_page()
-    errors = []
-    page.on("pageerror", lambda e: errors.append(str(e)))
+def test_login_scene_fallback_without_webgl_and_reduced_motion(browser, base):
+    page = page_for(browser, reduced_motion="reduce")
+    page.add_init_script(NO_WEBGL)
     page.goto(base + "/login")
-    page.wait_for_timeout(600)
-    assert page.locator(".scene-canvas canvas").count() == 0
-    assert page.locator(".scene-fallback").first.is_visible()
-    assert page.locator(".scene-controls").first.is_hidden()
-    assert "architectural illustration" in page.locator(".scene-instruction").first.inner_text()
-    page.click("text=Explore demo workspace")
-    page.wait_for_url(base + "/")  # navigation keeps working without WebGL
-    assert errors == []
-    ctx.close()
-
-
-def test_login_keyboard_and_password_toggle(browser, base):
-    ctx = browser.new_context(viewport={"width": 1200, "height": 800})
-    page = ctx.new_page()
-    page.goto(base + "/login")
-    page.keyboard.press("Tab")
-    assert page.evaluate("document.activeElement.classList.contains('skip-link')")
-    page.click("[data-password-toggle]")
-    assert page.locator("#password").get_attribute("type") == "text"
-    assert page.locator("[data-password-toggle]").get_attribute("aria-pressed") == "true"
-    ctx.close()
+    page.wait_for_timeout(800)
+    assert page.locator(".scene-fallback").is_visible()
+    assert page.locator("[data-scene] canvas").count() == 0
+    assert page.errors == []
