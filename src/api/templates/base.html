@@ -9,24 +9,24 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-primary: #06090f;
-            --bg-secondary: #0c1220;
-            --bg-card: rgba(15, 23, 42, 0.6);
-            --bg-card-hover: rgba(20, 30, 55, 0.7);
-            --border: rgba(56, 189, 248, 0.08);
-            --border-hover: rgba(56, 189, 248, 0.2);
-            --text-primary: #f1f5f9;
-            --text-secondary: #94a3b8;
-            --text-muted: #64748b;
-            --accent: #38bdf8;
-            --accent-glow: rgba(56, 189, 248, 0.15);
-            --accent-secondary: #818cf8;
-            --success: #4ade80;
-            --success-glow: rgba(74, 222, 128, 0.12);
-            --danger: #f87171;
-            --danger-glow: rgba(248, 113, 113, 0.12);
-            --warning: #fbbf24;
-            --warning-glow: rgba(251, 191, 36, 0.12);
+            --bg-primary: #000000;
+            --bg-secondary: #05070d;
+            --bg-card: rgba(10, 16, 32, 0.72);
+            --bg-card-hover: rgba(16, 26, 52, 0.85);
+            --border: rgba(59, 130, 246, 0.12);
+            --border-hover: rgba(96, 165, 250, 0.35);
+            --text-primary: #eef4ff;
+            --text-secondary: #93a9cc;
+            --text-muted: #5b7099;
+            --accent: #3b82f6;
+            --accent-glow: rgba(59, 130, 246, 0.18);
+            --accent-secondary: #60a5fa;
+            --success: #7dd3fc;
+            --success-glow: rgba(125, 211, 252, 0.16);
+            --danger: #4c6bf5;
+            --danger-glow: rgba(76, 107, 245, 0.20);
+            --warning: #60a5fa;
+            --warning-glow: rgba(96, 165, 250, 0.14);
             --radius: 16px;
             --radius-sm: 10px;
         }
@@ -47,7 +47,7 @@
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
             background:
-                radial-gradient(ellipse 80% 50% at 20% 40%, rgba(56, 189, 248, 0.06), transparent),
+                radial-gradient(ellipse 80% 50% at 20% 40%, rgba(59, 130, 246, 0.06), transparent),
                 radial-gradient(ellipse 60% 40% at 80% 20%, rgba(129, 140, 248, 0.05), transparent),
                 radial-gradient(ellipse 50% 60% at 50% 80%, rgba(74, 222, 128, 0.03), transparent);
             pointer-events: none;
@@ -299,11 +299,11 @@
         .btn-primary {
             background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
             color: white;
-            box-shadow: 0 4px 15px var(--accent-glow), 0 0 40px rgba(56, 189, 248, 0.08);
+            box-shadow: 0 4px 15px var(--accent-glow), 0 0 40px rgba(59, 130, 246, 0.08);
         }
         .btn-primary:hover {
             transform: translateY(-1px);
-            box-shadow: 0 6px 25px rgba(56, 189, 248, 0.25), 0 0 60px rgba(56, 189, 248, 0.12);
+            box-shadow: 0 6px 25px rgba(59, 130, 246, 0.25), 0 0 60px rgba(59, 130, 246, 0.12);
         }
         .btn-primary:active { transform: translateY(0); }
 
@@ -343,7 +343,7 @@
         .badge-green { background: var(--success-glow); color: var(--success); border: 1px solid rgba(74, 222, 128, 0.2); }
         .badge-red { background: var(--danger-glow); color: var(--danger); border: 1px solid rgba(248, 113, 113, 0.2); }
         .badge-yellow { background: var(--warning-glow); color: var(--warning); border: 1px solid rgba(251, 191, 36, 0.2); }
-        .badge-blue { background: var(--accent-glow); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.2); }
+        .badge-blue { background: var(--accent-glow); color: var(--accent); border: 1px solid rgba(59, 130, 246, 0.2); }
 
         .email-box {
             background: rgba(6, 9, 15, 0.5);
@@ -382,7 +382,7 @@
             transition: background 0.15s ease;
         }
         tbody tr:hover {
-            background: rgba(56, 189, 248, 0.03);
+            background: rgba(59, 130, 246, 0.03);
         }
 
         .shap-bar {
@@ -392,8 +392,8 @@
             vertical-align: middle;
             transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
         }
-        .shap-pos { background: linear-gradient(90deg, var(--danger), #fb923c); }
-        .shap-neg { background: linear-gradient(90deg, #22d3ee, var(--success)); }
+        .shap-pos { background: linear-gradient(90deg, var(--danger), #1d4ed8); }
+        .shap-neg { background: linear-gradient(90deg, #93c5fd, var(--success)); }
 
         .loading {
             display: none;
