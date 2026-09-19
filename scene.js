@@ -20,16 +20,16 @@ document.querySelectorAll('[data-scene]').forEach(host => {
   const scene=new THREE.Scene();
   const camera=new THREE.OrthographicCamera(-3,3,2.3,-2.3,.1,50);
   camera.position.set(6,4.8,7);camera.lookAt(0,.87,0);
-  scene.add(new THREE.HemisphereLight(0xfff8e7,0x79816d,2.8));
+  scene.add(new THREE.HemisphereLight(0xfff8e7,0x6d7881,2.8));
   const sun=new THREE.DirectionalLight(0xfff5d7,4.2);sun.position.set(-3,7,5);sun.castShadow=true;
   sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-5;sun.shadow.camera.right=5;sun.shadow.camera.top=5;sun.shadow.camera.bottom=-5;
   sun.shadow.normalBias=.035;sun.shadow.bias=-.0001;sun.shadow.radius=5;scene.add(sun);
   const fill=new THREE.DirectionalLight(0xffffff,1.7);fill.position.set(5,3,-4);scene.add(fill);
   const model=new THREE.Group();scene.add(model);
   const material=(color,roughness=.7,metalness=0)=>new THREE.MeshStandardMaterial({color,roughness,metalness});
-  const ivory=material(0xe9e6d7),ivoryLight=material(0xf8f5e8),green=material(0x214c3d,.48,.12),roofRib=material(0x365c48,.5,.15);
-  const bronze=material(0xb4995c,.32,.65),glass=material(0x969b79,.22,.4),frame=material(0x274b37,.65),stone=material(0xbbbea7);
-  const shrub=material(0x687753),darkShrub=material(0x3b5b3a);
+  const ivory=material(0xe9e6d7),ivoryLight=material(0xf8f5e8),green=material(0x21304c,.48,.12),roofRib=material(0x36445c,.5,.15);
+  const bronze=material(0xb4995c,.32,.65),glass=material(0x969b79,.22,.4),frame=material(0x27354b,.65),stone=material(0xbbbea7);
+  const shrub=material(0x536677),darkShrub=material(0x3a495b);
   function box(w,h,d,x,y,z,mat,parent=model){
     const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);mesh.position.set(x,y,z);mesh.castShadow=true;mesh.receiveShadow=true;parent.add(mesh);return mesh;
   }
